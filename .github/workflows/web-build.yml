@@ -50,6 +50,8 @@ jobs:
           dist="$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')/web/dist"
           name="filmcraft-web-$version"
           mkdir -p out && cp -r "$dist" "out/$name"
+          # Served to browsers = distributed: the licenses travel with it (as in PhotoCraft's zip).
+          cp LICENSE-* "out/$name/"
           (cd out && zip -qr9 "$name.zip" "$name")
           {
             echo "### FilmCraft web"
