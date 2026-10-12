@@ -34,7 +34,8 @@ jobs:
           base="https://github.com/wasm-bindgen/wasm-bindgen/releases/download/${WASM_BINDGEN_VERSION}"
           curl -fsSLO "$base/$name.tar.gz"
           curl -fsSLO "$base/$name.tar.gz.sha256sum"
-          sha256sum -c "$name.tar.gz.sha256sum"
+          # The .sha256sum file names the tarball under a gh-release/ path: compare the hash only.
+          echo "$(cut -d' ' -f1 "$name.tar.gz.sha256sum")  $name.tar.gz" | sha256sum -c -
           tar -xzf "$name.tar.gz"
           install -m 0755 "$name/wasm-bindgen" "$HOME/.cargo/bin/"
           wasm-bindgen --version
