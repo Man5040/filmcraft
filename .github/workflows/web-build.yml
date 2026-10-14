@@ -19,6 +19,8 @@ jobs:
     env:
       # Must match the `wasm-bindgen` crate version exactly (docs/web.md).
       WASM_BINDGEN_VERSION: 0.2.129
+      # Pinned recent binaryen for wasm-opt (see the install step).
+      BINARYEN_VERSION: version_133
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -39,8 +41,19 @@ jobs:
           tar -xzf "$name.tar.gz"
           install -m 0755 "$name/wasm-bindgen" "$HOME/.cargo/bin/"
           wasm-bindgen --version
-          # Optional size optimisation used by `cargo xtask web` when present.
-          sudo apt-get update -q && sudo apt-get install -yq binaryen
+          # Optional size optimisation used by `cargo xtask web` when present. A pinned, recent
+          # binaryen: Ubuntu's packaged one renumbers the tables, so the `__wbindgen_externrefs`
+          # export pointed at the fixed-size function table and the app failed at start
+          # ("WebAssembly.Table.grow(): failed to grow table by 4"). docs/web.md: "any recent".
+          b="binaryen-${BINARYEN_VERSION}"
+          curl -fsSLO "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN_VERSION}/$b-x86_64-linux.tar.gz"
+          curl -fsSLO "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN_VERSION}/$b-x86_64-linux.tar.gz.sha256"
+          echo "$(cut -d' ' -f1 "$b-x86_64-linux.tar.gz.sha256")  $b-x86_64-linux.tar.gz" | sha256sum -c -
+          tar -xzf "$b-x86_64-linux.tar.gz"
+          install -m 0755 "$b/bin/wasm-opt" "$HOME/.cargo/bin/"
+          cp -r "$b/lib/." "$HOME/.cargo/lib/" 2>/dev/null || { mkdir -p "$HOME/.cargo/lib" && cp -r "$b/lib/." "$HOME/.cargo/lib/"; }
+          export LD_LIBRARY_PATH="$HOME/.cargo/lib:${LD_LIBRARY_PATH:-}"
+          echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
           wasm-opt --version
       - name: Build
         run: cargo xtask web
