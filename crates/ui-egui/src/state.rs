@@ -463,6 +463,11 @@ pub struct UiState {
     /// The status bar (hints, messages, job progress). An app that embeds FilmCraft can hide it.
     #[serde(default = "shown")]
     pub show_status_bar: bool,
+    /// An app that embeds FilmCraft and draws its own panels around it: docked panels without
+    /// their tab strips and focus frames, and monitors without their controls (timecode, scrub
+    /// bar, transport). Set with `ui.set {embed: {bare}}`.
+    #[serde(default)]
+    pub embed_bare: bool,
     pub dark: bool,
     /// Lumetri scopes visible in the Program monitor area.
     pub show_scopes: bool,
@@ -975,6 +980,7 @@ impl Default for UiState {
             show_menu_bar: true,
             show_header: true,
             show_status_bar: true,
+            embed_bare: false,
             dark: true,
             show_scopes: false,
             status: String::new(),

@@ -193,6 +193,13 @@ impl FilmcraftApp {
         let mut groups = vec![];
         let mut layout_actions = Vec::new();
         dock::layout_with_actions(ui, &mut dock, body, &t, "", &mut groups, &mut self.auto, &mut layout_actions);
+        let bare = self.ui.embed_bare;
+        if bare {
+            // the embedding app draws the panels' frames: each group's body takes all its room
+            for group in &mut groups {
+                group.content = group.rect;
+            }
+        }
         let seqs = dock::SeqTabs {
             open: self
                 .session
@@ -211,7 +218,7 @@ impl FilmcraftApp {
         };
         let mut actions = vec![];
         let mut targets = vec![];
-        for group in &groups {
+        for group in groups.iter().filter(|_| !bare) {
             let chrome = dock::draw_group_chrome_details(ui, group, &seqs, &t, &mut self.auto);
             if let Some(target) = target(group, chrome.tabs, true) {
                 targets.push(target);
@@ -226,7 +233,7 @@ impl FilmcraftApp {
                 self.panel_body(ui, panel, group.content);
             }
         }
-        for group in &groups {
+        for group in groups.iter().filter(|_| !bare) {
             dock::paint_group_focus(ui, group, self.ui.focused, &t);
         }
         let floating_order = self.floating_order(&ctx);

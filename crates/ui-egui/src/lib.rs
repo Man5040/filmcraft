@@ -1259,6 +1259,26 @@ impl FilmcraftApp {
         self.texture_existing(&name)
     }
 
+    /// A frame of `item` at `t`, `width` wide, for an embedding app (`ui.thumbnails`): the same
+    /// cache as the Timeline's thumbnails; `None` asks for it, to be read on a later call.
+    pub fn thumbnail_rgba(&mut self, item: filmcraft_project::ItemId, t: Tick, width: u32) -> Option<std::sync::Arc<crate::frames::Rgba>> {
+        let pi = self.session.project.item(item)?;
+        let src_w = match &pi.kind {
+            filmcraft_project::ItemKind::Media(m) => m.info.video.as_ref()?.width,
+            filmcraft_project::ItemKind::Sequence(s) => s.settings.width,
+            _ => return None,
+        };
+        let rate = pi.frame_rate();
+        let frame = rate.frame_at(t);
+        let key = FrameKey { target: Target::Item(item), frame, size: width, revision: self.item_revision(item), draft: false };
+        if let Some(img) = self.frames.get(&key) {
+            return Some(img);
+        }
+        let project = self.session.project.clone();
+        self.frames.request(key, rate.tick_of(frame), width as f32 / src_w.max(1) as f32, &project, 50);
+        None
+    }
+
     // ---------------------------------------------------------------- files
 
     /// Destination of imports started from the currently shown Project panel view.

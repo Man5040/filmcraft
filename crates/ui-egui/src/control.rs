@@ -20,6 +20,12 @@
 //! - `ui.playback {action: play|stop|toggle, speed?}`
 //! - `ui.screenshot {path?, panel?}`: PNG of the window (or one panel)
 //! - `ui.resize {width, height}` / `ui.focus` / `app.quit`
+//! - `ui.set {embed: {header?, menuBar?, statusBar?, bare?}}`: an embedding app hides FilmCraft's
+//!   chrome (`bare`: panels without tab strips, monitors without their controls)
+//! - `ui.peaks {item, stream?, from?, to?, buckets?}`: an item's waveform, `buckets` (min, max)
+//!   pairs between `from` and `to` seconds; `{pending: true}` until the peaks are worked out
+//! - `ui.thumbnails {tiles: [{item, seconds}], width?}`: frames of items as PNGs (`null` while one
+//!   is still rendering: ask again)
 
 use std::sync::mpsc::Sender;
 
@@ -124,6 +130,22 @@ pub fn handle(app: &mut FilmcraftApp, ctx: &egui::Context, req: &ControlRequest)
             ok(serde_json::to_value(app.auto.query(prefix)).unwrap_or_default())
         }
         "ui.set" => {
+            // an app that embeds FilmCraft hides its chrome and draws its own around the panels
+            if let Some(e) = p.get("embed") {
+                let b = |k: &str| e.get(k).and_then(Value::as_bool);
+                if let Some(v) = b("header") {
+                    app.ui.show_header = v;
+                }
+                if let Some(v) = b("menuBar") {
+                    app.ui.show_menu_bar = v;
+                }
+                if let Some(v) = b("statusBar") {
+                    app.ui.show_status_bar = v;
+                }
+                if let Some(v) = b("bare") {
+                    app.ui.embed_bare = v;
+                }
+            }
             // Text to Speech panel draft (voice, pitch, pace, text…), merged into the current one
             if let Some(patch) = p.get("tts") {
                 let mut cur = serde_json::to_value(&app.ui.tts).unwrap_or_default();
@@ -412,6 +434,49 @@ pub fn handle(app: &mut FilmcraftApp, ctx: &egui::Context, req: &ControlRequest)
                 Some((x, y)) => ok(json!({"x": x, "y": y})),
                 None => err("clip not visible in the timeline"),
             }
+        }
+        "ui.peaks" => {
+            let Some(item) = p.get("item").and_then(Value::as_u64) else { return err("need `item`") };
+            let stream = p.get("stream").and_then(Value::as_u64).unwrap_or(0) as usize;
+            let item = filmcraft_project::ItemId(item);
+            // on the web the peaks are worked out during the first call: the second finds them
+            let Some(peaks) = crate::panels::timeline::request_peaks(app, item, stream).or_else(|| crate::panels::timeline::request_peaks(app, item, stream)) else {
+                return ok(json!({"pending": true}));
+            };
+            // one (min, max) pair per 256 samples at 48 kHz
+            let per_second = 48_000.0 / 256.0;
+            let from = (p.get("from").and_then(Value::as_f64).unwrap_or(0.0) * per_second).max(0.0) as usize;
+            let to = p.get("to").and_then(Value::as_f64).map_or(peaks.len(), |t| ((t * per_second) as usize).min(peaks.len()));
+            let span = &peaks[from.min(to)..to];
+            let buckets = p.get("buckets").and_then(Value::as_u64).unwrap_or(span.len() as u64).clamp(1, 8000) as usize;
+            let mut out = Vec::with_capacity(buckets.min(span.len()));
+            if !span.is_empty() {
+                let n = buckets.min(span.len());
+                for i in 0..n {
+                    let (a, b) = (i * span.len() / n, ((i + 1) * span.len() / n).max(i * span.len() / n + 1));
+                    let (lo, hi) = span[a..b].iter().fold((0f32, 0f32), |(l, h), (x, y)| (l.min(*x), h.max(*y)));
+                    out.push([(lo * 1000.0).round() / 1000.0, (hi * 1000.0).round() / 1000.0]);
+                }
+            }
+            ok(json!({"perSecond": per_second, "total": peaks.len(), "peaks": out}))
+        }
+        "ui.thumbnails" => {
+            let width = p.get("width").and_then(Value::as_u64).unwrap_or(160).clamp(16, 640) as u32;
+            let Some(tiles) = p.get("tiles").and_then(Value::as_array) else { return err("need `tiles`") };
+            let mut out = Vec::with_capacity(tiles.len());
+            for tile in tiles.iter().take(64) {
+                let Some(item) = tile.get("item").and_then(Value::as_u64) else { return err("each tile needs `item`") };
+                let seconds = tile.get("seconds").and_then(Value::as_f64).unwrap_or(0.0);
+                let t = filmcraft_time::Tick((seconds * 254_016_000_000.0).round() as i64);
+                out.push(match app.thumbnail_rgba(filmcraft_project::ItemId(item), t, width) {
+                    Some(img) => match encode_png(&img.px, img.w as u32, img.h as u32) {
+                        Ok(png) => json!({"pngBase64": base64(&png), "width": img.w, "height": img.h}),
+                        Err(e) => return err(e),
+                    },
+                    None => Value::Null,
+                });
+            }
+            ok(Value::Array(out))
         }
         "ui.playback" => {
             match s("action").unwrap_or("toggle") {
