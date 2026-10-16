@@ -460,6 +460,29 @@ pub fn handle(app: &mut FilmcraftApp, ctx: &egui::Context, req: &ControlRequest)
             }
             ok(json!({"perSecond": per_second, "total": peaks.len(), "peaks": out}))
         }
+        // one clip's effects in full (an embedding app's effect controls): every parameter's value
+        // and keyframes (time from the clip's start, value, interpolation, ease), and its masks
+        "ui.clip" => {
+            let Some(id) = p.get("clip").and_then(Value::as_u64) else { return err("need `clip`") };
+            let Some(seq) = app.session.active_sequence() else { return err("no sequence is open") };
+            let Some((track, item)) = seq.find_item(filmcraft_project::ClipId(id)) else { return err(format!("no clip {id} in the open sequence")) };
+            ok(json!({"clip": id, "track": track.0, "start": item.start.0, "sourceIn": item.source_in.0, "speed": item.speed, "effects": serde_json::to_value(&item.effects).unwrap_or_default()}))
+        }
+        // audio levels since the last call (an embedding app's meters, with the Audio Meters panel
+        // closed): peak dB per channel of the Mix and of each track, and the programme's loudness
+        "ui.meters" => {
+            crate::panels::meters::feed_loudness(app);
+            let db = |x: &f32| ((20.0 * x.max(1e-6).log10()) * 10.0).round() / 10.0;
+            let taken = app.session.previews.live.take_meters();
+            let master = taken.get(&filmcraft_render::mixer::MASTER).map(|v| v.iter().map(db).collect::<Vec<_>>());
+            let tracks: serde_json::Map<String, Value> =
+                taken.iter().filter(|(k, _)| **k != filmcraft_render::mixer::MASTER).map(|(k, v)| (k.0.to_string(), json!(v.iter().map(db).collect::<Vec<_>>()))).collect();
+            let (m, s, i, tp) = app.loudness.as_ref().map_or((f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY), |(l, _)| {
+                (l.momentary(), l.short_term(), l.integrated(), l.true_peak_dbtp())
+            });
+            let num = |v: f64| if v.is_finite() { json!((v * 10.0).round() / 10.0) } else { Value::Null };
+            ok(json!({"playing": app.playback.playing, "master": master, "tracks": tracks, "loudness": {"momentary": num(m), "shortTerm": num(s), "integrated": num(i), "truePeak": num(tp)}}))
+        }
         "ui.thumbnails" => {
             let width = p.get("width").and_then(Value::as_u64).unwrap_or(160).clamp(16, 640) as u32;
             let Some(tiles) = p.get("tiles").and_then(Value::as_array) else { return err("need `tiles`") };
